@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Contract Analyzer</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            padding: 40px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: auto;
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+        }
+
+        h1, h2, h3, h4 {
+            color: #333;
+        }
+
+        input[type="file"] {
+            margin: 10px 0;
+        }
+
+        button {
+            padding: 10px 16px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        .result {
+            margin-top: 20px;
+            background: #fafafa;
+            padding: 16px;
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 10px;
+        }
+
+        .badge {
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-weight: bold;
+            display: inline-block;
+        }
+
+        .low {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .medium {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .high {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        .rtl-text {
+            direction: rtl;
+            text-align: right;
+            unicode-bidi: plaintext;
+        }
+
+        .small {
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .evidence-box {
+            background: #f9fafb;
+            border-left: 4px solid #d1d5db;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+
+        .error {
+            color: #b91c1c;
+            background: #fee2e2;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 12px;
+        }
+
+        .success {
+            color: #166534;
+            background: #dcfce7;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Contract Analyzer</h1>
+    <p class="small">Upload a PDF, DOCX, or XLSX contract to extract text, detect clauses, estimate risk, and show recommendations.</p>
+
+    <form method="POST" action="/contract" enctype="multipart/form-data">
+        <input type="file" name="file" accept=".pdf,.docx,.xlsx" required>
+        <br>
+        <button type="submit">Analyze Contract</button>
+    </form>
+
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+
+    {% if analysis %}
+        <div class="success">
+            Contract analyzed successfully.
+            {% if filename %}Uploaded file: <strong>{{ filename }}</strong>.{% endif %}
+        </div>
+
+        <div class="result">
+            <h2>Results</h2>
+
+            <p><strong>Extraction Method:</strong> {{ analysis.extraction_method }}</p>
+
+            <p>
+                <strong>Overall Risk:</strong>
+                <span class="badge {{ analysis.overall_risk|lower }}">
+                    {{ analysis.overall_risk }}
+                </span>
+            </p>
+
+            <p><strong>Risk Score:</strong> {{ analysis.risk_score }}</p>
+
+            <h3>Summary</h3>
+            {% if analysis.summary %}
+                <ul class="rtl-text" lang="ar">
+                    {% for s in analysis.summary %}
+                        <li>{{ s }}</li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>No summary available.</p>
+            {% endif %}
+
+            <h3>Clauses</h3>
+            {% for name, clause in analysis.clauses.items() %}
+                <div class="card">
+                    <strong>{{ name.replace("_", " ").title() }}</strong><br>
+                    Status: {{ clause.status }}<br>
+                    Score: {{ clause.score }}<br>
+                    Matched by: {{ clause.matched_by }}
+
+                    {% if clause.evidence %}
+                        <div class="evidence-box">
+                            <strong>Evidence:</strong>
+                            <ul class="rtl-text" lang="ar">
+                                {% for e in clause.evidence %}
+                                    <li>{{ e }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+
+            <h3>Dates</h3>
+            {% if analysis.dates %}
+                <ul>
+                    {% for d in analysis.dates %}
+                        <li>{{ d }}</li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>No dates were clearly detected.</p>
+            {% endif %}
+
+            <h3>Financial Terms</h3>
+            {% if analysis.financial_terms %}
+                <ul>
+                    {% for m in analysis.financial_terms %}
+                        <li>{{ m }}</li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>No financial terms were clearly detected.</p>
+            {% endif %}
+
+            <h3>Risks</h3>
+            {% if analysis.risks %}
+                {% for r in analysis.risks %}
+                    <div class="card">
+                        <strong>{{ r.name }}</strong><br>
+                        Level:
+                        <span class="badge {{ r.level|lower }}">
+                            {{ r.level }}
+                        </span><br>
+                        {{ r.reason }}
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>No major risks were automatically detected.</p>
+            {% endif %}
+
+            <h3>Recommendations</h3>
+            {% if analysis.recommendations %}
+                <ul>
+                    {% for rec in analysis.recommendations %}
+                        <li>{{ rec }}</li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p>No recommendations available.</p>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+
+</body>
+</html>

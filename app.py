@@ -1,51 +1,75 @@
-from flask import Flask, render_template, request
 import os
-from ai import extract_text, analyze_contract
-from transformers import pipeline
+from flask import Flask, render_template, request
+from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+from ai.contract_ai import analyze_contract
+
+load_dotenv()
 
 app = Flask(__name__)
 
-# 📁 uploads folder
 UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+ALLOWED_EXTENSIONS = {"pdf", "docx", "xlsx"}
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# 🤖 Chat AI (بسيط)
-chatbot = pipeline("text-generation", model="distilgpt2")
 
-@app.route("/", methods=["GET", "POST"])
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+@app.route("/")
 def home():
-    result = None
-    risk = None
-    summary = None
-    explanation = None
-    chat_response = None
+    return render_template("contract.html")
 
+
+@app.route("/contract", methods=["GET", "POST"])
+def contract_page():
     if request.method == "POST":
-        file = request.files.get("file")
-        user_question = request.form.get("question")
+        if "file" not in request.files:
+            return render_template("contract.html", error="No file was uploaded.")
 
-        # 📄 تحليل العقد
-        if file and file.filename:
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], file.filename)
-            file.save(filepath)
+        file = request.files["file"]
 
-            text = extract_text(filepath)
-            result, risk, summary, explanation = analyze_contract(text)
+        if file.filename == "":
+            return render_template("contract.html", error="Please choose a file.")
 
-        # 🤖 Chat
-        if user_question:
-            response = chatbot(user_question, max_length=100, num_return_sequences=1)
-            chat_response = response[0]["generated_text"]
+        if not allowed_file(file.filename):
+            return render_template(
+                "contract.html",
+                error="Only PDF, DOCX, and XLSX files are allowed."
+            )
 
-    return render_template(
-        "index.html",
-        result=result,
-        risk=risk,
-        summary=summary,
-        explanation=explanation,
-        chat_response=chat_response
-    )
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        file.save(file_path)
+
+        try:
+            analysis = analyze_contract(file_path=file_path)
+
+            # Security: delete uploaded contract after analysis
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            return render_template(
+                "contract.html",
+                analysis=analysis,
+                filename=filename
+            )
+
+        except Exception as e:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+            return render_template(
+                "contract.html",
+                error=f"Analysis failed: {str(e)}"
+            )
+
+    return render_template("contract.html")
+
 
 if __name__ == "__main__":
     app.run(debug=True)
