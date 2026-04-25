@@ -1,138 +1,84 @@
 import os
 import re
 import json
-import cv2
 import fitz
-import numpy as np
 import pandas as pd
 import pytesseract
+import cv2
+import numpy as np
 
 from docx import Document
 from pdf2image import convert_from_path
 from google import genai
 
+# 🔑 Gemini
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+# ⚠️ عدلي المسار إذا عندك مختلف
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-POPPLER_PATH = r"C:\poppler\poppler-25.12.0\Library\bin"
+POPPLER_PATH = None
 
-API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY was not found. Check your .env file.")
-
-client = genai.Client(api_key=API_KEY)
-
-
+# -------------------------------
+# تنظيف النص
+# -------------------------------
 def clean_text(text):
-    text = text or ""
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", text or "").strip()
 
 
-def contains_arabic(text):
-    return bool(re.search(r"[\u0600-\u06FF]", text or ""))
-
-
-def preprocess_image_for_ocr(pil_image):
-    img = np.array(pil_image)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    img = cv2.GaussianBlur(img, (3, 3), 0)
-    _, img = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return img
-
-
+# -------------------------------
+# PDF Extraction (ذكي)
+# -------------------------------
 def extract_text_from_pdf(file_path):
-    extracted_text = ""
+    text = ""
 
     try:
         doc = fitz.open(file_path)
         for page in doc:
-            extracted_text += page.get_text("text") + "\n"
+            text += page.get_text()
         doc.close()
 
-        extracted_text = clean_text(extracted_text)
+        text = clean_text(text)
 
-        # If Arabic text looks problematic, OCR may work better
-        if len(extracted_text) > 80 and not contains_arabic(extracted_text):
-            return {
-                "text": extracted_text,
-                "method": "pdf_text"
-            }
+        # لو النص فاضي → OCR
+        if len(text) < 50:
+            images = convert_from_path(file_path, poppler_path=POPPLER_PATH)
 
-    except Exception:
-        pass
+            for img in images:
+                img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+                text += pytesseract.image_to_string(img, lang="ara+eng")
 
-    try:
-        images = convert_from_path(file_path, poppler_path=POPPLER_PATH)
-        ocr_text = ""
+        return text
 
-        for img in images:
-            processed = preprocess_image_for_ocr(img)
-            config = r"--oem 3 --psm 6"
-            page_text = pytesseract.image_to_string(
-                processed,
-                lang="ara+eng",
-                config=config
-            )
-            ocr_text += page_text + "\n"
-
-        ocr_text = clean_text(ocr_text)
-
-        if len(ocr_text) > 20:
-            return {
-                "text": ocr_text,
-                "method": "ocr"
-            }
-
-    except Exception:
-        pass
-
-    return {
-        "text": extracted_text,
-        "method": "pdf_text_fallback"
-    }
+    except Exception as e:
+        print("PDF Error:", e)
+        return ""
 
 
-def extract_text_from_docx(file_path):
-    try:
-        doc = Document(file_path)
-        text = ""
-
-        for para in doc.paragraphs:
-            text += para.text + "\n"
-
-        return {
-            "text": clean_text(text),
-            "method": "docx"
-        }
-
-    except Exception:
-        return {
-            "text": "",
-            "method": "docx_failed"
-        }
-
-
+# -------------------------------
+# Excel
+# -------------------------------
 def extract_text_from_excel(file_path):
     try:
         df = pd.read_excel(file_path)
-        text_parts = []
-
-        for col in df.columns:
-            values = df[col].astype(str).tolist()
-            text_parts.append(f"{col}: " + " ".join(values))
-
-        return {
-            "text": clean_text(" ".join(text_parts)),
-            "method": "excel"
-        }
-
-    except Exception:
-        return {
-            "text": "",
-            "method": "excel_failed"
-        }
+        return clean_text(" ".join(df.astype(str).values.flatten()))
+    except:
+        return ""
 
 
+# -------------------------------
+# Word
+# -------------------------------
+def extract_text_from_docx(file_path):
+    try:
+        doc = Document(file_path)
+        return clean_text(" ".join([p.text for p in doc.paragraphs]))
+    except:
+        return ""
+
+
+# -------------------------------
+# Gemini LLM
+# -------------------------------
 def default_result():
     return {
         "contract_type": "Unknown",
@@ -141,61 +87,66 @@ def default_result():
         "dates": [],
         "financial_terms": [],
         "clauses": {
-            "payment": {"status": "missing", "evidence": []},
-            "termination": {"status": "missing", "evidence": []},
-            "liability": {"status": "missing", "evidence": []},
-            "confidentiality": {"status": "missing", "evidence": []},
-            "governing_law": {"status": "missing", "evidence": []},
-            "penalties": {"status": "missing", "evidence": []},
-            "renewal": {"status": "missing", "evidence": []}
+            "payment": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
+            "termination": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
+            "liability": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
+            "confidentiality": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
+            "governing_law": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
+            "penalties": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
+            "renewal": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []}
         },
         "risks": [],
         "overall_risk": "Unknown",
+        "risk_score": "",
         "recommendations": [],
-        "confidence": "Low"
+        "confidence": "Low",
+        "extraction_method": ""
     }
 
 
-def parse_json_response(raw_text):
-    raw_text = (raw_text or "").strip()
+def normalize_result(data):
+    result = default_result()
 
-    try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError:
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
+    if not isinstance(data, dict):
+        result["recommendations"] = ["AI returned an invalid response."]
+        return result
 
-        if start != -1 and end != -1 and end > start:
-            return json.loads(raw_text[start:end + 1])
+    result["contract_type"] = data.get("contract_type", "Unknown")
+    result["summary"] = data.get("summary", [])
+    result["parties"] = data.get("parties", [])
+    result["dates"] = data.get("dates", [])
+    result["financial_terms"] = data.get("financial_terms", [])
+    result["risks"] = data.get("risks", [])
+    result["overall_risk"] = data.get("overall_risk", "Unknown")
+    result["risk_score"] = data.get("risk_score", "")
+    result["recommendations"] = data.get("recommendations", [])
+    result["confidence"] = data.get("confidence", "Low")
 
-    raise ValueError("Gemini did not return valid JSON.")
+    clauses = data.get("clauses", {})
+    for name in result["clauses"]:
+        clause = clauses.get(name, {})
+        result["clauses"][name] = {
+            "status": clause.get("status", "missing"),
+            "score": clause.get("score", ""),
+            "matched_by": clause.get("matched_by", "LLM"),
+            "evidence": clause.get("evidence", [])
+        }
+
+    return result
 
 
-def analyze_with_gemini(contract_text):
-    contract_text = clean_text(contract_text)
-
-    if not contract_text:
+def analyze_with_gemini(text):
+    if not text or len(text.strip()) < 20:
         result = default_result()
-        result["recommendations"] = ["No readable text was extracted from the file."]
+        result["recommendations"] = ["No readable text was extracted from the uploaded file."]
         return result
 
     prompt = f"""
 You are an expert contract analysis assistant.
 
-Analyze the contract text and return ONLY valid JSON.
-Do not include markdown.
-Do not include explanations outside JSON.
+Return ONLY valid JSON. No markdown. No explanation.
 
-Support both Arabic and English.
-
-Be conservative:
-- If a clause is unclear, mark it as "missing".
-- Evidence must be short and copied from the contract text.
-- Do not invent names, dates, or amounts.
-- overall_risk must be exactly: Low, Medium, or High.
-- confidence must be exactly: Low, Medium, or High.
-
-Return this exact JSON structure:
+Analyze this contract and return this exact structure:
 
 {{
   "contract_type": "string",
@@ -204,65 +155,83 @@ Return this exact JSON structure:
   "dates": ["string"],
   "financial_terms": ["string"],
   "clauses": {{
-    "payment": {{"status": "found or missing", "evidence": ["string"]}},
-    "termination": {{"status": "found or missing", "evidence": ["string"]}},
-    "liability": {{"status": "found or missing", "evidence": ["string"]}},
-    "confidentiality": {{"status": "found or missing", "evidence": ["string"]}},
-    "governing_law": {{"status": "found or missing", "evidence": ["string"]}},
-    "penalties": {{"status": "found or missing", "evidence": ["string"]}},
-    "renewal": {{"status": "found or missing", "evidence": ["string"]}}
+    "payment": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
+    "termination": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
+    "liability": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
+    "confidentiality": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
+    "governing_law": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
+    "penalties": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
+    "renewal": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}}
   }},
   "risks": [
-    {{"name": "string", "level": "Low or Medium or High", "reason": "string"}}
+    {{"name": "string", "level": "Low/Medium/High", "reason": "string"}}
   ],
-  "overall_risk": "Low or Medium or High",
+  "overall_risk": "Low/Medium/High",
+  "risk_score": "number from 0 to 10",
   "recommendations": ["string"],
-  "confidence": "Low or Medium or High"
+  "confidence": "Low/Medium/High"
 }}
 
 Contract text:
-{contract_text}
+{text}
 """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt
-    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt
+        )
 
-    data = parse_json_response(response.text)
+        raw = (response.text or "").strip()
 
-    result = default_result()
-    result.update(data)
+        start = raw.find("{")
+        end = raw.rfind("}")
 
-    return result
+        if start == -1 or end == -1:
+            result = default_result()
+            result["recommendations"] = ["Gemini did not return JSON."]
+            return result
+
+        data = json.loads(raw[start:end + 1])
+        return normalize_result(data)
+
+    except Exception as e:
+        result = default_result()
+        result["recommendations"] = [f"Gemini analysis failed: {str(e)}"]
+        return result
 
 
-def analyze_contract(file_path=None, text=None):
-    if file_path:
-        lower_path = file_path.lower()
+def analyze_contract(file_path=None):
+    if not file_path:
+        result = default_result()
+        result["recommendations"] = ["No file was uploaded."]
+        return result
 
-        if lower_path.endswith(".pdf"):
-            extracted = extract_text_from_pdf(file_path)
-        elif lower_path.endswith(".docx"):
-            extracted = extract_text_from_docx(file_path)
-        elif lower_path.endswith(".xlsx"):
-            extracted = extract_text_from_excel(file_path)
-        else:
-            extracted = {
-                "text": "",
-                "method": "unsupported_file"
-            }
+    lower_path = file_path.lower()
 
-        analysis = analyze_with_gemini(extracted["text"])
-        analysis["extraction_method"] = extracted["method"]
-        return analysis
+    if lower_path.endswith(".pdf"):
+        text = extract_text_from_pdf(file_path)
+        method = "pdf"
 
-    if text:
-        analysis = analyze_with_gemini(text)
-        analysis["extraction_method"] = "direct_text"
-        return analysis
+    elif lower_path.endswith(".docx"):
+        text = extract_text_from_docx(file_path)
+        method = "docx"
 
-    result = default_result()
-    result["extraction_method"] = "none"
-    result["recommendations"] = ["No contract input was provided."]
-    return result
+    elif lower_path.endswith(".xlsx"):
+        text = extract_text_from_excel(file_path)
+        method = "excel"
+
+    else:
+        result = default_result()
+        result["extraction_method"] = "unsupported_file"
+        result["recommendations"] = ["Unsupported file type."]
+        return result
+
+    analysis = analyze_with_gemini(text)
+    analysis["extraction_method"] = method
+
+    print("TEXT LENGTH:", len(text))
+    print("EXTRACTION METHOD:", method)
+    print("AI RESULT KEYS:", analysis.keys())
+
+    return analysis

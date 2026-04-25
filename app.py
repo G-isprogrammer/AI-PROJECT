@@ -1,11 +1,13 @@
 import os
-from flask import Flask, render_template, request
-from werkzeug.utils import secure_filename
+from pathlib import Path
 from dotenv import load_dotenv
 
-from ai.contract_ai import analyze_contract
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-load_dotenv()
+from flask import Flask, render_template, request
+from werkzeug.utils import secure_filename
+from ai.contract_ai import analyze_contract
 
 app = Flask(__name__)
 
