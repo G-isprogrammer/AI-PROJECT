@@ -1,0 +1,12 @@
+flask
+openai
+python-dotenv
+pymupdf
+pytesseract
+pdf2image
+opencv-python
+numpy
+pandas
+python-docx
+chromadb
+pypdf

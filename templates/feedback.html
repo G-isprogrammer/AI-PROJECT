@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Feedback Analyzer</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f7fb;
+            padding: 40px;
+        }
+
+        .container {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+            max-width: 950px;
+            margin: auto;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 140px;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            resize: vertical;
+            font-size: 15px;
+        }
+
+        .btn {
+            margin-top: 12px;
+            padding: 10px 18px;
+            border: none;
+            background: #3b82f6;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .card {
+            background: #fafafa;
+            padding: 16px;
+            margin-top: 18px;
+            border-radius: 10px;
+            border: 1px solid #eee;
+        }
+
+        .error {
+            background: #fee2e2;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .success {
+            background: #d1fae5;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 999px;
+            background: #e5e7eb;
+            margin: 4px 0;
+        }
+
+        .evidence-box {
+            margin-top: 10px;
+            padding: 12px;
+            background: #f8f9fa;
+            border-left: 4px solid #ccc;
+            border-radius: 8px;
+            overflow-wrap: break-word;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+
+        @media (max-width: 700px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+    <h1>Feedback Analyzer</h1>
+    <p>Enter a building review or issue to classify it and check if it relates to the contract.</p>
+
+    <form method="POST" action="/feedback">
+        <textarea name="feedback" placeholder="Example: يوجد تشقق في الخرسانة في بيت الدرج...">{{ feedback_text or "" }}</textarea>
+        <br>
+        <button class="btn" type="submit">Analyze Feedback</button>
+    </form>
+
+    {% if error %}
+        <div class="error">{{ error }}</div>
+    {% endif %}
+
+    {% if result %}
+        <div class="success">Feedback analyzed successfully.</div>
+
+        <div class="card">
+            <h2>Feedback Result</h2>
+
+            <div class="grid">
+                <div>
+                    <p><strong>Issue Summary:</strong></p>
+                    <p>{{ result.issue_summary }}</p>
+                </div>
+
+                <div>
+                    <p><strong>Category:</strong></p>
+                    <span class="badge">{{ result.category }}</span>
+
+                    <p><strong>Priority:</strong></p>
+                    <span class="badge">{{ result.priority }}</span>
+
+                    <p><strong>Recurring:</strong></p>
+                    <span class="badge">{{ result.recurring }}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Contract Relation</h2>
+
+            <p><strong>Related to Contract:</strong> {{ result.is_related_to_contract }}</p>
+            <p><strong>Relation Status:</strong> {{ result.relation_status }}</p>
+            <p><strong>Matched Contract Area:</strong> {{ result.matched_contract_area }}</p>
+
+            {% if result.matched_evidence and result.matched_evidence != "missing" %}
+                <div class="evidence-box">
+                    <strong>Matched Evidence:</strong>
+                    <p>{{ result.matched_evidence }}</p>
+                </div>
+            {% endif %}
+
+            <p><strong>Reason:</strong></p>
+            <p>{{ result.reason }}</p>
+
+            <p><strong>Recommended Action:</strong></p>
+            <p>{{ result.recommended_action }}</p>
+
+            <p><strong>Confidence:</strong> {{ result.confidence }}</p>
+        </div>
+
+        {% if result.basic_analysis %}
+            <div class="card">
+                <h2>Basic Classification</h2>
+
+                <p><strong>Original Text:</strong></p>
+                <p>{{ result.basic_analysis.original_text }}</p>
+
+                <p><strong>Cleaned Text:</strong></p>
+                <p>{{ result.basic_analysis.cleaned_text }}</p>
+
+                <p><strong>Keyword Category:</strong> {{ result.basic_analysis.category }}</p>
+                <p><strong>Keyword Priority:</strong> {{ result.basic_analysis.priority }}</p>
+
+                <h3>Category Scores</h3>
+                <ul>
+                    {% for key, value in result.basic_analysis.scores.items() %}
+                        <li>{{ key }}: {{ value }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+    {% endif %}
+</div>
+
+</body>
+</html>

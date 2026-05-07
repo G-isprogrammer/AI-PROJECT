@@ -2,243 +2,454 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Contract Analyzer</title>
+    <title>Contract Analysis</title>
 
     <style>
         body {
             font-family: Arial, sans-serif;
-            background: #f4f6f8;
-            padding: 40px;
+            background: #f6f8fb;
             margin: 0;
+            padding: 30px;
+            color: #222;
         }
 
         .container {
-            max-width: 1000px;
+            max-width: 1400px;
             margin: auto;
-            background: white;
-            padding: 24px;
-            border-radius: 12px;
-            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
-        }
-
-        h1, h2, h3, h4 {
-            color: #333;
-        }
-
-        input[type="file"] {
-            margin: 10px 0;
-        }
-
-        button {
-            padding: 10px 16px;
-            background: #2563eb;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-
-        button:hover {
-            background: #1d4ed8;
-        }
-
-        .result {
-            margin-top: 20px;
-            background: #fafafa;
-            padding: 16px;
-            border-radius: 10px;
-            border: 1px solid #e5e7eb;
         }
 
         .card {
             background: white;
-            border: 1px solid #ddd;
-            border-radius: 8px;
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+        }
+
+        h1, h2, h3 {
+            margin-top: 0;
+        }
+
+        .section-title {
+            border-left: 5px solid #1f6feb;
+            padding-left: 12px;
+        }
+
+        .upload-box {
+            text-align: center;
+            padding: 30px;
+            border: 2px dashed #ccc;
+            border-radius: 16px;
+            background: white;
+        }
+
+        input[type="file"] {
+            margin: 15px 0;
+        }
+
+        button {
+            background: #1f6feb;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+        }
+
+        button:hover {
+            background: #1557b0;
+        }
+
+        .error {
+            color: #b00020;
+            background: #ffecec;
             padding: 12px;
-            margin-top: 10px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .mini-card {
+            background: #f3f6fb;
+            padding: 15px;
+            border-radius: 12px;
+        }
+
+        .label {
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 6px;
+        }
+
+        .score {
+            font-size: 42px;
+            font-weight: bold;
+            color: #1f6feb;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 14px;
+            border-bottom: 1px solid #ddd;
+            text-align: left;
+            vertical-align: top;
+        }
+
+        th {
+            background: #f3f6fb;
         }
 
         .badge {
             padding: 5px 10px;
-            border-radius: 6px;
+            border-radius: 20px;
+            font-size: 13px;
             font-weight: bold;
-            display: inline-block;
         }
 
-        .low {
-            background: #dcfce7;
-            color: #166534;
+        .found, .specified {
+            background: #e7f7ed;
+            color: #137333;
         }
 
-        .medium {
-            background: #fef3c7;
-            color: #92400e;
+        .partial, .partially, .unclear {
+            background: #fff4d6;
+            color: #9a6700;
         }
 
-        .high {
-            background: #fee2e2;
-            color: #991b1b;
+        .missing {
+            background: #fde7e9;
+            color: #b00020;
         }
 
-        ul {
-            padding-left: 20px;
+        .risk-high {
+            color: #b00020;
+            font-weight: bold;
         }
 
-        .rtl-text {
-            direction: rtl;
-            text-align: right;
-            unicode-bidi: plaintext;
+        .risk-medium {
+            color: #9a6700;
+            font-weight: bold;
         }
 
-        .small {
-            color: #6b7280;
-            font-size: 14px;
-        }
-
-        .evidence-box {
-            background: #f9fafb;
-            border-left: 4px solid #d1d5db;
-            padding: 10px;
-            border-radius: 6px;
-            margin-top: 10px;
-        }
-
-        .error {
-            color: #b91c1c;
-            background: #fee2e2;
-            padding: 10px;
-            border-radius: 8px;
-            margin-top: 12px;
-        }
-
-        .success {
-            color: #166534;
-            background: #dcfce7;
-            padding: 10px;
-            border-radius: 8px;
-            margin-top: 12px;
+        .risk-low {
+            color: #137333;
+            font-weight: bold;
         }
     </style>
 </head>
+
 <body>
 
 <div class="container">
-    <h1>Contract Analyzer</h1>
-    <p class="small">Upload a PDF, DOCX, or XLSX contract to extract text, detect clauses, estimate risk, and show recommendations.</p>
 
-    <form method="POST" action="/contract" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".pdf,.docx,.xlsx" required>
-        <br>
-        <button type="submit">Analyze Contract</button>
-    </form>
+    <h1>AI Construction Contract Analysis</h1>
 
     {% if error %}
         <div class="error">{{ error }}</div>
     {% endif %}
 
-    {% if analysis %}
-        <div class="success">
-            Contract analyzed successfully.
-            {% if filename %}Uploaded file: <strong>{{ filename }}</strong>.{% endif %}
-        </div>
+    <div class="upload-box">
+        <form method="POST" action="/contract" enctype="multipart/form-data">
 
-        <div class="result">
-            <h2>Results</h2>
-
-            <p><strong>Extraction Method:</strong> {{ analysis.extraction_method }}</p>
+            <h2>Upload Contract</h2>
 
             <p>
-                <strong>Overall Risk:</strong>
-                <span class="badge {{ analysis.overall_risk|lower }}">
-                    {{ analysis.overall_risk }}
-                </span>
+                Supported files:
+                PDF, DOCX, XLSX, PNG, JPG, JPEG
             </p>
 
-            <p><strong>Risk Score:</strong> {{ analysis.risk_score }}</p>
+            <input type="file" name="file" required>
 
-            <h3>Summary</h3>
-            {% if analysis.summary %}
-                <ul class="rtl-text" lang="ar">
-                    {% for s in analysis.summary %}
-                        <li>{{ s }}</li>
+            <br>
+
+            <button type="submit">
+                Analyze Contract
+            </button>
+
+        </form>
+    </div>
+
+    {% if analysis %}
+
+    <!-- OVERVIEW -->
+    <div class="card">
+
+        <h2 class="section-title">
+            1. Contract Overview
+        </h2>
+
+        <div class="grid">
+
+            <div class="mini-card">
+                <div class="label">Contract Type</div>
+                {{ analysis.contract_overview.contract_type }}
+            </div>
+
+            <div class="mini-card">
+                <div class="label">Parties</div>
+
+                {% if analysis.contract_overview.parties %}
+                    {% for party in analysis.contract_overview.parties %}
+                        <div>{{ party }}</div>
                     {% endfor %}
-                </ul>
-            {% else %}
-                <p>No summary available.</p>
-            {% endif %}
+                {% else %}
+                    missing
+                {% endif %}
+            </div>
 
-            <h3>Clauses</h3>
-            {% for name, clause in analysis.clauses.items() %}
-                <div class="card">
-                    <strong>{{ name.replace("_", " ").title() }}</strong><br>
-                    Status: {{ clause.status }}<br>
-                    Score: {{ clause.score }}<br>
-                    Matched by: {{ clause.matched_by }}
+            <div class="mini-card">
+                <div class="label">Contract Start Date</div>
+                {{ analysis.contract_overview.contract_start_date }}
+            </div>
 
-                    {% if clause.evidence %}
-                        <div class="evidence-box">
-                            <strong>Evidence:</strong>
-                            <ul class="rtl-text" lang="ar">
-                                {% for e in clause.evidence %}
-                                    <li>{{ e }}</li>
-                                {% endfor %}
-                            </ul>
-                        </div>
-                    {% endif %}
-                </div>
-            {% endfor %}
+            <div class="mini-card">
+                <div class="label">Contract Duration</div>
+                {{ analysis.contract_overview.contract_duration }}
+            </div>
 
-            <h3>Dates</h3>
-            {% if analysis.dates %}
-                <ul>
-                    {% for d in analysis.dates %}
-                        <li>{{ d }}</li>
-                    {% endfor %}
-                </ul>
-            {% else %}
-                <p>No dates were clearly detected.</p>
-            {% endif %}
+            <div class="mini-card">
+                <div class="label">Contract Value</div>
+                {{ analysis.contract_overview.contract_value }}
+            </div>
 
-            <h3>Financial Terms</h3>
-            {% if analysis.financial_terms %}
-                <ul>
-                    {% for m in analysis.financial_terms %}
-                        <li>{{ m }}</li>
-                    {% endfor %}
-                </ul>
-            {% else %}
-                <p>No financial terms were clearly detected.</p>
-            {% endif %}
-
-            <h3>Risks</h3>
-            {% if analysis.risks %}
-                {% for r in analysis.risks %}
-                    <div class="card">
-                        <strong>{{ r.name }}</strong><br>
-                        Level:
-                        <span class="badge {{ r.level|lower }}">
-                            {{ r.level }}
-                        </span><br>
-                        {{ r.reason }}
-                    </div>
-                {% endfor %}
-            {% else %}
-                <p>No major risks were automatically detected.</p>
-            {% endif %}
-
-            <h3>Recommendations</h3>
-            {% if analysis.recommendations %}
-                <ul>
-                    {% for rec in analysis.recommendations %}
-                        <li>{{ rec }}</li>
-                    {% endfor %}
-                </ul>
-            {% else %}
-                <p>No recommendations available.</p>
-            {% endif %}
         </div>
+
+    </div>
+
+{% set contract_type = (analysis.contract_type|string)|lower %}
+
+{% if "maintenance" in contract_type
+   or "design" in contract_type
+   or "boq" in contract_type
+   or "bill of quantities" in contract_type
+   or "quotation" in contract_type
+   or "invoice" in contract_type %}
+    <div class="error" style="background:#fff4d6; color:#9a6700;">
+        This document is not a complete construction agreement, therefore full legal and contractual evaluation is limited.
+
+        <br><br>
+
+        For accurate AI clause analysis, risk evaluation, and recommendations, please upload the full construction agreement/contract document.
+    </div>
+
+    {% else %}
+
+    <!-- COMPLETENESS -->
+    <div class="card">
+
+        <h2 class="section-title">
+            2. Contract Completeness Evaluation
+        </h2>
+
+        <div class="grid">
+
+            <div class="mini-card">
+                <div class="label">Completeness Score</div>
+
+                <div class="score">
+                    {{ analysis.completeness_score }}%
+                </div>
+            </div>
+
+            <div class="mini-card">
+                <div class="label">Extracted Clauses</div>
+
+                <div class="score">
+                    {{ analysis.number_of_extracted_clauses }}
+                </div>
+            </div>
+
+            <div class="mini-card">
+                <div class="label">Overall Risk</div>
+
+                <span class="risk-{{ analysis.overall_risk|lower }}">
+                    {{ analysis.overall_risk }}
+                </span>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- EXTRACTED CLAUSES -->
+    <div class="card">
+
+        <h2 class="section-title">
+            3. Extracted Clauses
+        </h2>
+
+        {% if analysis.extracted_clauses %}
+
+        <table>
+
+            <thead>
+                <tr>
+                    <th>Clause Category</th>
+                    <th>Status</th>
+                    <th>Risk Level</th>
+                    <th>Extracted Text</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+                {% for clause in analysis.extracted_clauses %}
+
+                <tr>
+
+                    <td>
+                        <strong>{{ clause.clause_category }}</strong>
+                    </td>
+
+                    <td>
+                        <span class="badge {{ clause.status|lower|replace(' ', '-') }}">
+                            {{ clause.status }}
+                        </span>
+                    </td>
+
+                    <td class="risk-{{ clause.risk_level|lower }}">
+                        {{ clause.risk_level }}
+                    </td>
+
+                    <td>
+                        {{ clause.extracted_text }}
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+        {% else %}
+
+            <p>No clauses extracted.</p>
+
+        {% endif %}
+
+    </div>
+
+    <!-- RECOMMENDATIONS -->
+    <div class="card">
+
+        <h2 class="section-title">
+            4. Recommendations
+        </h2>
+
+        <h3>Ambiguous Clauses</h3>
+
+        {% if analysis.ai_recommendations.ambiguous_clauses %}
+
+        <table>
+
+            <thead>
+                <tr>
+                    <th>Clause</th>
+                    <th>Issue</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+                {% for item in analysis.ai_recommendations.ambiguous_clauses %}
+
+                <tr>
+
+                    <td>
+                        <strong>{{ item.clause }}</strong>
+                    </td>
+
+                    <td>
+                        {{ item.issue }}
+                    </td>
+
+                    <td>
+                        {{ item.recommendation }}
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+        {% else %}
+
+            <p>No ambiguous medium/high risk clauses detected.</p>
+
+        {% endif %}
+
+        <br>
+
+        <h3>Missing Clauses</h3>
+
+        {% if analysis.ai_recommendations.missing_core_clauses %}
+
+        <table>
+
+            <thead>
+                <tr>
+                    <th>Missing Clause</th>
+                    <th>Importance</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+
+            <tbody>
+
+                {% for item in analysis.ai_recommendations.missing_core_clauses %}
+
+                <tr>
+
+                    <td>
+                        <strong>{{ item.clause }}</strong>
+                    </td>
+
+                    <td>
+                        {{ item.importance }}
+                    </td>
+
+                    <td>
+                        {{ item.recommendation }}
+                    </td>
+
+                </tr>
+
+                {% endfor %}
+
+            </tbody>
+
+        </table>
+
+        {% else %}
+
+            <p>No missing core clauses detected.</p>
+
+        {% endif %}
+
+    </div>
+
     {% endif %}
+
+    {% endif %}
+
 </div>
 
 </body>

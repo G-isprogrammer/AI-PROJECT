@@ -9,7 +9,10 @@ import numpy as np
 
 from docx import Document
 from pdf2image import convert_from_path
-from google import genai
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 🔑 Gemini
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -32,7 +35,8 @@ def extract_text_from_pdf(file_path):
     text = ""
 
     try:
-        doc = fitz.open(file_path)
+        doc = fitz.open(path)
+
         for page in doc:
             text += page.get_text()
         doc.close()
@@ -82,10 +86,32 @@ def extract_text_from_docx(file_path):
 def default_result():
     return {
         "contract_type": "Unknown",
+        "document_type": "Unknown",
+        "is_full_contract": False,
+        "contract_subtype": "Unknown",
+        "contract_quality_score": 0,
+        "completeness_score": 0,
+        "number_of_extracted_clauses": 0,
+
+        "contract_overview": {
+            "contract_type": "Unknown",
+            "parties": [],
+            "contract_start_date": "missing",
+            "contract_duration": "missing",
+            "contract_value": "missing"
+        },
+
         "summary": [],
         "parties": [],
         "dates": [],
         "financial_terms": [],
+        "construction_scope": [],
+        "materials": [],
+        "technical_requirements": [],
+        "quality_constraints": [],
+        "warranty_or_guarantees": [],
+        "construction_risks": [],
+
         "clauses": {
             "payment": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
             "termination": {"status": "missing", "score": "", "matched_by": "LLM", "evidence": []},
@@ -149,11 +175,16 @@ Return ONLY valid JSON. No markdown. No explanation.
 Analyze this contract and return this exact structure:
 
 {{
-  "contract_type": "string",
-  "summary": ["string", "string", "string"],
-  "parties": ["string"],
-  "dates": ["string"],
-  "financial_terms": ["string"],
+  "contract_type": "",
+  "document_type": "",
+  "is_full_contract": false,
+  "contract_subtype": "",
+  "summary": ["", "", ""],
+  "parties": [],
+  "dates": [
+    {{"date": "", "type": "", "evidence": []}}
+  ],
+  "financial_terms": [],
   "clauses": {{
     "payment": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
     "termination": {{"status": "found or missing", "score": "High/Medium/Low", "matched_by": "LLM", "evidence": ["string"]}},
