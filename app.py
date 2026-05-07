@@ -1,21 +1,10 @@
 import os
-<<<<<<< HEAD
-from pathlib import Path
-from dotenv import load_dotenv
 
-env_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=env_path)
-
-from flask import Flask, render_template, request
-from werkzeug.utils import secure_filename
-from ai.contract_ai import analyze_contract
-=======
 from flask import Flask, render_template, request, session
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
 load_dotenv()
->>>>>>> 2bf1007 (Improve contract clause analysis and recommendations)
 
 from ai.contract_ai import analyze_contract
 from ai.feedback_ai import analyze_feedback_with_contract
