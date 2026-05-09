@@ -20,6 +20,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 POPPLER_PATH = r"C:\poppler\poppler-25.12.0\Library\bin"
 
+
 # ---------- RAG / KNOWLEDGE BASE ----------
 try:
     chroma_client = chromadb.PersistentClient(path="chroma_db")
@@ -57,6 +58,227 @@ Important clauses to check:
 def clean_text(text):
     text = text or ""
     return re.sub(r"\s+", " ", text).strip()
+
+
+# ---------- REGEX FALLBACKS ----------
+def extract_contract_value_regex(text):
+    text = clean_text(text)
+
+    patterns = [
+        r"(?:contract value|project value|total value|contract amount|contract price|total price|price|amount).*?(\d[\d,\.]*)\s*(?:SAR|SR|riyal|riyals)",
+        r"(?:SAR|SR)\s*(\d[\d,\.]*)",
+        r"(\d[\d,\.]*)\s*(?:SAR|SR|riyal|riyals)",
+
+        r"(?:قيمة العقد|قيمة المشروع|المبلغ الإجمالي|اجمالي قيمة العقد|إجمالي قيمة العقد|السعر الإجمالي|اجمالي المبلغ|إجمالي المبلغ|المبلغ|القيمة).*?(\d[\d,\.]*)\s*(?:ريال|ر\.س|SAR|SR)",
+        r"(\d[\d,\.]*)\s*(?:ريال|ر\.س)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            return f"{value} SAR"
+
+    return "missing"
+
+
+def extract_duration_regex(text):
+    text = clean_text(text)
+
+    patterns = [
+        r"(?:duration|period|completion period|project duration|time for completion).*?(\d+)\s*(months?|years?|weeks?|days?)",
+        r"(\d+)\s*(months?|years?|weeks?|days?)",
+
+        r"(?:مدة العقد|مدة المشروع|مدة التنفيذ|فترة التنفيذ|مدة الإنجاز|مدة الانجاز).*?(\d+)\s*(شهر|أشهر|اشهر|سنة|سنوات|أسبوع|اسبوع|أسابيع|اسابيع|يوم|أيام|ايام)",
+        r"(\d+)\s*(شهر|أشهر|اشهر|سنة|سنوات|أسبوع|اسبوع|أسابيع|اسابيع|يوم|أيام|ايام)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return f"{match.group(1)} {match.group(2)}"
+
+    return "missing"
+
+
+def text_has_any(text, keywords):
+    text = text.lower()
+    return any(keyword.lower() in text for keyword in keywords)
+
+
+def ensure_clause(result, clause_name, evidence_text, risk_level="Medium", status="partial", issue="", recommendation=""):
+    if "clauses" not in result or not isinstance(result["clauses"], dict):
+        result["clauses"] = {}
+
+    current = result["clauses"].get(clause_name, {})
+    current_status = str(current.get("status", "missing")).lower()
+
+    if current_status in ["missing", "", "not found", "not_found", "not specified", "not_specified"]:
+        result["clauses"][clause_name] = {
+            "status": status,
+            "risk_level": risk_level,
+            "issue": issue,
+            "recommendation": recommendation,
+            "evidence": [evidence_text],
+        }
+    else:
+        evidence = current.get("evidence", [])
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)]
+
+        if evidence_text and evidence_text not in evidence:
+            evidence.append(evidence_text)
+
+        current["evidence"] = evidence
+        current["risk_level"] = current.get("risk_level") or risk_level
+        current["issue"] = current.get("issue") or issue
+        current["recommendation"] = current.get("recommendation") or recommendation
+
+        result["clauses"][clause_name] = current
+
+    return result
+
+
+def infer_clauses_from_text(result, contract_text):
+    text = clean_text(contract_text)
+    lower = text.lower()
+
+    if not text:
+        return result
+
+    if text_has_any(lower, ["scope of work", "construction", "structural", "excavation", "concrete", "masonry", "أعمال", "تنفيذ", "خرسانة", "بناء", "إنشاء", "انشاء"]):
+        result = ensure_clause(
+            result,
+            "scope",
+            "The document describes construction works and contractor work scope.",
+            risk_level="Low",
+            status="found",
+            issue="",
+            recommendation=""
+        )
+
+    if text_has_any(lower, ["payment", "contract value", "contract price", "amount", "SAR", "SR", "ريال", "مبلغ", "قيمة", "دفعة", "دفع"]):
+        result = ensure_clause(
+            result,
+            "payment",
+            "The document includes financial or payment-related terms.",
+            risk_level="Medium",
+            status="partial",
+            issue="Payment terms may require clearer milestones or payment conditions.",
+            recommendation="Clarify payment amount, payment method, milestones, and due dates."
+        )
+
+    if text_has_any(lower, ["milestone", "payment schedule", "installment", "دفعة", "دفعات", "جدول السداد", "مستخلص"]):
+        result = ensure_clause(
+            result,
+            "payment_schedule",
+            "The document refers to payment stages or installment-related information.",
+            risk_level="Medium",
+            status="partial",
+            issue="Payment schedule may need clearer milestone conditions.",
+            recommendation="Add a milestone-based payment schedule with approval requirements."
+        )
+
+    if text_has_any(lower, ["duration", "completion", "months", "days", "weeks", "مدة", "إنجاز", "انجاز", "شهر", "أشهر", "اشهر", "يوم", "أيام"]):
+        result = ensure_clause(
+            result,
+            "timeline",
+            "The document includes a project duration or completion period.",
+            risk_level="Medium",
+            status="partial",
+            issue="Timeline exists but may need exact start date, completion date, and delay handling.",
+            recommendation="Clarify project start date, completion date, duration, and consequences of delay."
+        )
+
+    if text_has_any(lower, ["material", "materials", "specification", "brand", "supplier", "مواد", "المواد", "مواصفات", "توريد", "اعتماد"]):
+        result = ensure_clause(
+            result,
+            "materials",
+            "The document refers to materials or technical specifications.",
+            risk_level="Medium",
+            status="partial",
+            issue="Material specifications may not be fully detailed.",
+            recommendation="Specify material type, quality, grade, supplier, and approval process."
+        )
+
+    if text_has_any(lower, ["penalty", "penalties", "delay damages", "delay", "غرامة", "غرامات", "تأخير", "تاخير", "جزاء"]):
+        result = ensure_clause(
+            result,
+            "penalties",
+            "The document refers to delay or penalty-related obligations.",
+            risk_level="Medium",
+            status="partial",
+            issue="Delay penalties may need clearer amount, calculation method, and enforcement procedure.",
+            recommendation="Clarify delay penalty value, calculation basis, grace period, and enforcement process."
+        )
+
+    if text_has_any(lower, ["warranty", "guarantee", "defects liability", "ضمان", "كفالة", "عيوب"]):
+        result = ensure_clause(
+            result,
+            "warranty",
+            "The document refers to warranty, guarantee, or defect-related responsibility.",
+            risk_level="Medium",
+            status="partial",
+            issue="Warranty terms may need clearer duration and coverage.",
+            recommendation="Specify warranty duration, covered defects, exclusions, and repair process."
+        )
+
+    if text_has_any(lower, ["termination", "terminate", "فسخ", "إنهاء", "انهاء"]):
+        result = ensure_clause(
+            result,
+            "termination",
+            "The document refers to termination or contract ending conditions.",
+            risk_level="Medium",
+            status="partial",
+            issue="Termination procedure may require clearer notice period and consequences.",
+            recommendation="Clarify termination rights, notice period, compensation, and handover obligations."
+        )
+
+    if text_has_any(lower, ["liability", "indemnity", "damage", "damages", "مسؤولية", "تعويض", "أضرار", "اضرار"]):
+        result = ensure_clause(
+            result,
+            "liability",
+            "The document refers to responsibility, damages, or compensation.",
+            risk_level="Medium",
+            status="partial",
+            issue="Liability scope may need clearer limits and responsibilities.",
+            recommendation="Clarify liability limits, indemnity obligations, and responsibility for damages."
+        )
+
+    if text_has_any(lower, ["saudi building code", "sbc", "municipality", "permit", "permits", "code", "كود البناء السعودي", "البلدية", "رخصة", "تصريح", "اشتراطات"]):
+        result = ensure_clause(
+            result,
+            "compliance",
+            "The document refers to regulatory, permit, or Saudi compliance requirements.",
+            risk_level="Medium",
+            status="partial",
+            issue="Compliance requirements may need clearer standards and responsible party.",
+            recommendation="Add clear compliance obligations for Saudi Building Code, permits, municipality approvals, and safety regulations."
+        )
+
+    if text_has_any(lower, ["dispute", "arbitration", "court", "محكمة", "تحكيم", "نزاع", "خلاف"]):
+        result = ensure_clause(
+            result,
+            "dispute_resolution",
+            "The document refers to dispute, arbitration, or court handling.",
+            risk_level="Medium",
+            status="partial",
+            issue="Dispute resolution process may need clearer jurisdiction and steps.",
+            recommendation="Specify dispute escalation steps, governing court or arbitration body, and applicable jurisdiction."
+        )
+
+    if text_has_any(lower, ["law", "governing law", "regulation", "نظام", "القانون", "الأنظمة", "الانظمة"]):
+        result = ensure_clause(
+            result,
+            "governing_law",
+            "The document refers to laws or regulations.",
+            risk_level="Medium",
+            status="partial",
+            issue="Governing law may need explicit wording.",
+            recommendation="Clearly state the governing law and applicable Saudi regulations."
+        )
+
+    return result
 
 
 # ---------- RAG RETRIEVAL ----------
@@ -165,7 +387,6 @@ def extract_text_from_pdf(path):
 # ---------- DOCX ----------
 def extract_text_from_docx(path):
     doc = Document(path)
-
     parts = []
 
     for p in doc.paragraphs:
@@ -247,20 +468,20 @@ def default_result():
         "construction_risks": [],
 
         "clauses": {
-            "scope": {"status": "missing", "evidence": [], "risk_level": "High"},
-            "payment": {"status": "missing", "evidence": [], "risk_level": "High"},
-            "payment_schedule": {"status": "missing", "evidence": [], "risk_level": "High"},
-            "timeline": {"status": "missing", "evidence": [], "risk_level": "High"},
-            "materials": {"status": "missing", "evidence": [], "risk_level": "High"},
-            "warranty": {"status": "missing", "evidence": [], "risk_level": "Medium"},
-            "termination": {"status": "missing", "evidence": [], "risk_level": "Medium"},
-            "liability": {"status": "missing", "evidence": [], "risk_level": "Medium"},
-            "confidentiality": {"status": "missing", "evidence": [], "risk_level": "Low"},
-            "governing_law": {"status": "missing", "evidence": [], "risk_level": "Medium"},
-            "dispute_resolution": {"status": "missing", "evidence": [], "risk_level": "Medium"},
-            "penalties": {"status": "missing", "evidence": [], "risk_level": "Medium"},
-            "renewal": {"status": "missing", "evidence": [], "risk_level": "Low"},
-            "compliance": {"status": "missing", "evidence": [], "risk_level": "Medium"}
+            "scope": {"status": "missing", "evidence": [], "risk_level": "High", "issue": "", "recommendation": ""},
+            "payment": {"status": "missing", "evidence": [], "risk_level": "High", "issue": "", "recommendation": ""},
+            "payment_schedule": {"status": "missing", "evidence": [], "risk_level": "High", "issue": "", "recommendation": ""},
+            "timeline": {"status": "missing", "evidence": [], "risk_level": "High", "issue": "", "recommendation": ""},
+            "materials": {"status": "missing", "evidence": [], "risk_level": "High", "issue": "", "recommendation": ""},
+            "warranty": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""},
+            "termination": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""},
+            "liability": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""},
+            "confidentiality": {"status": "missing", "evidence": [], "risk_level": "Low", "issue": "", "recommendation": ""},
+            "governing_law": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""},
+            "dispute_resolution": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""},
+            "penalties": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""},
+            "renewal": {"status": "missing", "evidence": [], "risk_level": "Low", "issue": "", "recommendation": ""},
+            "compliance": {"status": "missing", "evidence": [], "risk_level": "Medium", "issue": "", "recommendation": ""}
         },
 
         "extracted_clauses": [],
@@ -349,9 +570,13 @@ STRICT RULES:
 - Do NOT copy long sentences from the contract.
 - Summary must be specific to THIS document.
 - For Arabic contracts, keep extracted Arabic names and terms as they appear.
-- Normalize party names:
-  - "Employer", "Owner", "Client" → always return as "Owner"
-  - "Contractor" stays "Contractor"
+- Extract contract_value clearly if any amount appears as the contract amount, total project value, total price, or lump sum.
+- Extract contract_duration clearly if the document mentions duration, completion period, or execution period.
+- Extract found and partial clauses even when they are not perfect.
+
+Normalize party names:
+- "Employer", "Owner", "Client" → always return as "Owner"
+- "Contractor" stays "Contractor"
 
 Document type rules:
 - Full Construction Contract: has legal + financial + technical clauses.
@@ -364,40 +589,6 @@ Clause status rules:
 - "partial" = clause exists but is vague, incomplete, unclear, or missing important details.
 - "missing" = clause is not found in the contract.
 
- Important intelligence rule:
-A clause should NOT be marked Low Risk just because it exists.
-
-Mark as Medium Risk when:
-- the clause exists but is general
-- responsibilities are not fully clear
-- procedures are missing
-- dates, amounts, standards, limits, or consequences are incomplete
-- wording may lead to different interpretations
-
-For each found or partial clause, provide:
-- the real issue in that clause
-- a practical recommendation to improve that clause
-- short paraphrased extracted evidence
-
-Do not make all clauses Low Risk unless they are truly detailed, measurable, and enforceable.
-Risk analysis rules:
-- Low Risk:
-  Clause is clear, measurable, enforceable, and sufficiently detailed.
-
-- Medium Risk:
-  Clause exists but contains ambiguity, missing procedures, unclear responsibilities, vague wording, incomplete legal/technical detail, or weak enforceability.
-
-- High Risk:
-  Clause is missing, contradictory, legally risky, technically unclear, or may create serious disputes.
-
-For each clause:
-- If the clause is found, extract a short paraphrased text.
-- If the clause is complete and clear, mark Low.
-- If the clause exists but is vague, incomplete, missing procedures, missing limits, or unclear responsibilities, mark Medium.
-- If the clause is missing or creates serious enforceability risk, mark High.
-- For Medium and High only, provide a specific issue and recommendation.
-- Do not mark all clauses Low just because they exist..
-
 PRE-DETECTED DATES:
 {detected_dates}
 
@@ -408,6 +599,8 @@ Return ONLY valid JSON in this exact structure:
   "document_type": "",
   "is_full_contract": false,
   "contract_subtype": "",
+  "contract_value": "",
+  "duration": "",
   "summary": ["", "", ""],
   "parties": [],
   "dates": [
@@ -415,104 +608,20 @@ Return ONLY valid JSON in this exact structure:
   ],
   "financial_terms": [],
   "clauses": {{
-    "scope": {{
-       "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "payment": {{
-     "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "payment_schedule": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "timeline": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "materials": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "warranty": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "termination": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "liability": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "confidentiality": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "governing_law": {{
-       "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "dispute_resolution": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "penalties": {{
-        "status": "found or partial or missing",
-    "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "renewal": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }},
-    "compliance": {{
-        "status": "found or partial or missing",
-  "risk_level": "Low or Medium or High",
-  "issue": "",
-  "recommendation": "",
-  "evidence": []
-    }}
+    "scope": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "payment": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "payment_schedule": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "timeline": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "materials": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "warranty": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "termination": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "liability": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "confidentiality": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "governing_law": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "dispute_resolution": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "penalties": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "renewal": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}},
+    "compliance": {{"status": "found or partial or missing", "risk_level": "Low or Medium or High", "issue": "", "recommendation": "", "evidence": []}}
   }},
   "construction_scope": [
     {{"category": "", "description": "", "quantity_or_area": "Not specified", "evidence": []}}
@@ -625,14 +734,9 @@ def merge_results(results):
         if not result:
             continue
 
-        if final["contract_type"] == "Unknown" and result.get("contract_type"):
-            final["contract_type"] = result.get("contract_type")
-
-        if final["document_type"] == "Unknown" and result.get("document_type"):
-            final["document_type"] = result.get("document_type")
-
-        if final["contract_subtype"] == "Unknown" and result.get("contract_subtype"):
-            final["contract_subtype"] = result.get("contract_subtype")
+        for direct_key in ["contract_type", "document_type", "contract_subtype", "contract_value", "duration"]:
+            if final.get(direct_key) in [None, "", "Unknown", "missing"] and result.get(direct_key):
+                final[direct_key] = result.get(direct_key)
 
         if result.get("is_full_contract"):
             final["is_full_contract"] = True
@@ -660,7 +764,9 @@ def merge_results(results):
                 final["clauses"][clause_name] = {
                     "status": "missing",
                     "evidence": [],
-                    "risk_level": ""
+                    "risk_level": "",
+                    "issue": "",
+                    "recommendation": ""
                 }
 
             old_status = final["clauses"][clause_name].get("status")
@@ -672,8 +778,9 @@ def merge_results(results):
                 clause_data.get("evidence")
             )
 
-            if clause_data.get("risk_level"):
-                final["clauses"][clause_name]["risk_level"] = clause_data.get("risk_level")
+            for field in ["risk_level", "issue", "recommendation"]:
+                if clause_data.get(field):
+                    final["clauses"][clause_name][field] = clause_data.get(field)
 
     return final
 
@@ -749,16 +856,22 @@ def normalize_clauses(result):
     default_clauses = default_result()["clauses"]
     clauses = result.get("clauses", {})
 
+    if not isinstance(clauses, dict):
+        clauses = {}
+
     for clause_name, default_clause in default_clauses.items():
-        if clause_name not in clauses:
-            clauses[clause_name] = default_clause
+        if clause_name not in clauses or not isinstance(clauses.get(clause_name), dict):
+            clauses[clause_name] = default_clause.copy()
 
         clauses[clause_name]["status"] = clauses[clause_name].get("status") or "missing"
         clauses[clause_name]["evidence"] = clauses[clause_name].get("evidence") or []
         clauses[clause_name]["risk_level"] = clauses[clause_name].get("risk_level") or default_clause["risk_level"]
+        clauses[clause_name]["issue"] = clauses[clause_name].get("issue") or ""
+        clauses[clause_name]["recommendation"] = clauses[clause_name].get("recommendation") or ""
 
     result["clauses"] = clauses
     return result
+
 
 def normalize_key(key):
     return str(key).strip().lower().replace(" ", "_").replace("-", "_")
@@ -839,7 +952,6 @@ def apply_score(result):
 
     score = round(score)
 
-    # safety fallback: if AI extracted clauses but score is still 0
     found_count = 0
     for clause in clauses.values():
         status = str(clause.get("status", "")).strip().lower()
@@ -877,6 +989,7 @@ def ensure_recommendations(result):
 
     default_recs = {
         "scope": "Add a clear and detailed scope of work.",
+        "payment": "Add clear contract value and payment obligations.",
         "payment_schedule": "Add a milestone-based payment schedule.",
         "timeline": "Add project start date, completion date, and delay rules.",
         "materials": "Clarify whether materials are included and specify material quality, grade, and supplier.",
@@ -901,7 +1014,7 @@ def ensure_recommendations(result):
 
 
 # ---------- DISPLAY SECTIONS ----------
-def build_contract_overview(result):
+def build_contract_overview(result, contract_text=""):
     overview = {
         "contract_type": result.get("contract_type", "Unknown"),
         "parties": [],
@@ -910,16 +1023,13 @@ def build_contract_overview(result):
         "contract_value": "missing"
     }
 
-    # ---------- FORMAT PARTIES ----------
     for party in result.get("parties", []):
         if isinstance(party, dict):
-
             role = party.get("role", "Party")
             name = party.get("name", "Not specified")
 
             formatted = f"{role}: {name}"
 
-            # Add company / CR if exists
             if party.get("commercial_registration"):
                 formatted += f" | CR: {party.get('commercial_registration')}"
 
@@ -928,10 +1038,8 @@ def build_contract_overview(result):
         else:
             overview["parties"].append(str(party))
 
-    # ---------- FIND CONTRACT START DATE ----------
     for item in result.get("dates", []):
         if isinstance(item, dict):
-
             date_type = str(item.get("type", "")).lower()
 
             if any(word in date_type for word in [
@@ -948,53 +1056,69 @@ def build_contract_overview(result):
                 overview["contract_start_date"] = item.get("date", "missing")
                 break
 
-    # ---------- FIND CONTRACT VALUE ----------
-    for item in result.get("financial_terms", []):
+    direct_value = result.get("contract_value")
+    if direct_value and direct_value not in ["missing", "Unknown", ""]:
+        overview["contract_value"] = direct_value
 
-        if isinstance(item, dict):
+    if overview["contract_value"] == "missing":
+        for item in result.get("financial_terms", []):
+            if isinstance(item, dict):
+                possible_keys = [
+                    "total_contract_value",
+                    "contract_value",
+                    "total_value",
+                    "total_price",
+                    "amount",
+                    "price"
+                ]
 
-            possible_keys = [
-                "total_contract_value",
-                "contract_value",
-                "total_value",
-                "total_price",
-                "amount",
-                "price"
-            ]
+                for key in possible_keys:
+                    value = item.get(key)
 
-            for key in possible_keys:
+                    if value and value not in ["missing", "Unknown", ""]:
+                        overview["contract_value"] = value
+                        break
 
-                value = item.get(key)
-
-                if value:
-                    overview["contract_value"] = value
+                if overview["contract_value"] != "missing":
                     break
 
-            if overview["contract_value"] != "missing":
-                break
+    if overview["contract_value"] == "missing":
+        overview["contract_value"] = extract_contract_value_regex(contract_text)
 
-    # ---------- FIND CONTRACT DURATION ----------
-    for clause in result.get("clauses", {}).values():
+    direct_duration = result.get("duration") or result.get("contract_duration") or result.get("project_duration")
+    if direct_duration and direct_duration not in ["missing", "Unknown", ""]:
+        overview["contract_duration"] = direct_duration
 
-        if isinstance(clause, dict):
+    if overview["contract_duration"] == "missing":
+        for clause in result.get("clauses", {}).values():
+            if isinstance(clause, dict):
+                evidence = " ".join(clause.get("evidence", []))
 
-            evidence = " ".join(clause.get("evidence", []))
+                if any(word in evidence.lower() for word in [
+                    "duration",
+                    "completion",
+                    "months",
+                    "days",
+                    "weeks",
+                    "مدة",
+                    "إنجاز",
+                    "انجاز",
+                    "شهر",
+                    "أشهر",
+                    "اشهر"
+                ]):
+                    overview["contract_duration"] = evidence
+                    break
 
-            if any(word in evidence.lower() for word in [
-                "duration",
-                "completion",
-                "months",
-                "days",
-                "مدة",
-                "إنجاز",
-                "انجاز"
-            ]):
-                overview["contract_duration"] = evidence
-                break
+    if overview["contract_duration"] == "missing":
+        overview["contract_duration"] = extract_duration_regex(contract_text)
 
     result["contract_overview"] = overview
+    result["contract_value"] = overview["contract_value"]
+    result["duration"] = overview["contract_duration"]
 
     return result
+
 
 def build_extracted_clauses_table(result):
     rows = []
@@ -1002,11 +1126,20 @@ def build_extracted_clauses_table(result):
     for clause_name, clause_data in result.get("clauses", {}).items():
         status = str(clause_data.get("status", "missing")).lower()
 
-        if status == "missing":
+        if status in ["missing", "not found", "not_found", "not specified", "not_specified"]:
             continue
 
         evidence = clause_data.get("evidence", [])
-        extracted_text = evidence[0] if evidence else "No clear evidence provided"
+        if not isinstance(evidence, list):
+            evidence = [str(evidence)]
+
+        extracted_text = (
+            evidence[0]
+            if evidence
+            else clause_data.get("issue")
+            or clause_data.get("recommendation")
+            or "Clause detected."
+        )
 
         rows.append({
             "clause_category": clause_name.replace("_", " ").title(),
@@ -1019,7 +1152,9 @@ def build_extracted_clauses_table(result):
 
     result["extracted_clauses"] = rows
     result["number_of_extracted_clauses"] = len(rows)
+
     return result
+
 
 def build_missing_and_recommendations(result):
     clauses = result.get("clauses", {})
@@ -1042,6 +1177,7 @@ def build_missing_and_recommendations(result):
 
     ambiguous = []
     missing = []
+    improvement_recommendations = []
 
     for clause_name, importance in required_clauses.items():
         data = clauses.get(clause_name, {})
@@ -1050,23 +1186,34 @@ def build_missing_and_recommendations(result):
 
         readable = clause_name.replace("_", " ").title()
 
-        if status == "missing":
+        if status in ["missing", "not found", "not_found", "not specified", "not_specified"]:
+            rec = f"Add a clear {readable} clause with specific responsibilities, requirements, and consequences."
+
             missing.append({
                 "clause": readable,
                 "importance": importance,
-                "recommendation": f"Add a clear {readable} clause with specific responsibilities, requirements, and consequences."
+                "risk_if_missing": "May create contractual uncertainty or disputes.",
+                "recommendation": rec
             })
 
+            improvement_recommendations.append(rec)
+
         elif risk in ["medium", "high"]:
+            rec = data.get("recommendation") or f"Clarify {readable} with measurable terms, responsible parties, dates, and consequences."
+
             ambiguous.append({
                 "clause": readable,
                 "issue": data.get("issue") or f"{readable} exists but may create risk due to unclear or incomplete terms.",
-                "recommendation": data.get("recommendation") or f"Clarify {readable} with measurable terms, responsible parties, dates, and consequences."
+                "why_it_matters": importance,
+                "recommendation": rec
             })
+
+            improvement_recommendations.append(rec)
 
     result["ai_recommendations"] = {
         "ambiguous_clauses": ambiguous,
-        "missing_core_clauses": missing
+        "missing_core_clauses": missing,
+        "improvement_recommendations": improvement_recommendations
     }
 
     result["missing_clauses"] = missing
@@ -1074,15 +1221,17 @@ def build_missing_and_recommendations(result):
 
     return result
 
-def finalize_display_sections(result, rag_used=False):
+
+def finalize_display_sections(result, contract_text="", rag_used=False):
     result["completeness_score"] = result.get("contract_quality_score", 0)
     result["rag_used"] = rag_used
 
-    result = build_contract_overview(result)
+    result = build_contract_overview(result, contract_text)
     result = build_extracted_clauses_table(result)
     result = build_missing_and_recommendations(result)
 
     return result
+
 
 # ---------- AI MAIN ----------
 def analyze_with_openai(contract_text):
@@ -1092,7 +1241,7 @@ def analyze_with_openai(contract_text):
     if not contract_text:
         result = default_result()
         result["recommendations"] = ["No readable text was extracted from the file."]
-        result = finalize_display_sections(result, rag_used=False)
+        result = finalize_display_sections(result, contract_text, rag_used=False)
         return result
 
     sbc_context = retrieve_sbc_context(contract_text)
@@ -1110,7 +1259,10 @@ def analyze_with_openai(contract_text):
     if not results:
         result = default_result()
         result["recommendations"] = ["AI analysis failed. Try uploading a clearer file."]
-        result = finalize_display_sections(result, rag_used=rag_used)
+        result = infer_clauses_from_text(result, contract_text)
+        result = apply_score(result)
+        result = ensure_recommendations(result)
+        result = finalize_display_sections(result, contract_text, rag_used=rag_used)
         return result
 
     if len(results) == 1:
@@ -1121,10 +1273,11 @@ def analyze_with_openai(contract_text):
 
     result = enforce_document_type(result, contract_text)
     result = normalize_clauses(result)
+    result = infer_clauses_from_text(result, contract_text)
     result = clean_materials(result)
     result = apply_score(result)
     result = ensure_recommendations(result)
-    result = finalize_display_sections(result, rag_used=rag_used)
+    result = finalize_display_sections(result, contract_text, rag_used=rag_used)
 
     return result
 
@@ -1161,6 +1314,5 @@ def analyze_contract(file_path=None, text=None):
     result = default_result()
     result["recommendations"] = ["No contract provided."]
     result["extraction_method"] = "none"
-    result = finalize_display_sections(result, rag_used=False)
+    result = finalize_display_sections(result, "", rag_used=False)
     return result
-# test
