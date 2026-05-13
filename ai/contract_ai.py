@@ -1316,3 +1316,4 @@ def analyze_contract(file_path=None, text=None):
     result["extraction_method"] = "none"
     result = finalize_display_sections(result, "", rag_used=False)
     return result
+
